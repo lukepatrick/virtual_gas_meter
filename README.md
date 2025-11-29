@@ -133,43 +133,297 @@ The integration consists of the following files:
 
 ## Dashboard Examples
 
-### Bill Entry Mode - Simple Dashboard
+### Bill Entry Mode
+
+#### Option 1: Built-in HA Cards with Input Helpers
+
+This approach uses standard Home Assistant cards and input helpers for a user-friendly bill entry experience.
+
+**Step 1: Create Input Helpers**
+
+Add to `configuration.yaml`:
+```yaml
+input_datetime:
+  gas_billing_date:
+    name: Billing Date
+    has_date: true
+    has_time: false
+    icon: mdi:calendar
+
+input_number:
+  gas_meter_reading:
+    name: Meter Reading
+    min: 0
+    max: 100000
+    step: 0.01
+    mode: box
+    icon: mdi:meter-gas
+    unit_of_measurement: "CCF"  # Change to "m³" for metric
+
+input_button:
+  submit_gas_reading:
+    name: Submit Reading
+    icon: mdi:send
+```
+
+**Step 2: Create Automation**
+
+Add to `automations.yaml`:
+```yaml
+- id: gas_meter_bill_entry
+  alias: "Gas Meter - Submit Bill Reading"
+  trigger:
+    - platform: state
+      entity_id: input_button.submit_gas_reading
+  condition:
+    - condition: numeric_state
+      entity_id: input_number.gas_meter_reading
+      above: 0
+  action:
+    - service: gas_meter.enter_bill_reading
+      data:
+        billing_date: "{{ states('input_datetime.gas_billing_date') }}"
+        meter_reading: "{{ states('input_number.gas_meter_reading') | float }}"
+    - service: persistent_notification.create
+      data:
+        title: "Gas Meter Updated"
+        message: "Reading of {{ states('input_number.gas_meter_reading') }} submitted for {{ states('input_datetime.gas_billing_date') }}"
+```
+
+**Step 3: Dashboard Card**
+
 ```yaml
 type: vertical-stack
 title: Gas Meter
 cards:
+  # Current Status
   - type: entities
     entities:
       - entity: sensor.gas_consumption_data
+        name: Latest Reading
+
+  # Usage Statistics
   - type: markdown
-    title: Gas Readings History
+    title: Monthly Usage
+    content: >
+      {% set records = state_attr('sensor.gas_consumption_data', 'records') %}
+      {% if records and records | length > 1 %}
+        {% set latest = records[-1] %}
+        {% set previous = records[-2] %}
+        {% set usage = (latest.consumed_gas | replace(' CCF', '') | replace(' m³', '') | float) - (previous.consumed_gas | replace(' CCF', '') | replace(' m³', '') | float) %}
+        **Last Period Usage:** {{ "%.2f" | format(usage) }} {{ latest.consumed_gas.split(' ')[-1] }}
+
+        **Current Reading:** {{ latest.consumed_gas }}
+
+        **Previous Reading:** {{ previous.consumed_gas }}
+      {% elif records and records | length == 1 %}
+        **Current Reading:** {{ records[0].consumed_gas }}
+
+        _Enter another reading to see usage._
+      {% else %}
+        _No readings yet._
+      {% endif %}
+
+  # Bill Entry Form
+  - type: entities
+    title: Enter New Reading
+    entities:
+      - entity: input_datetime.gas_billing_date
+      - entity: input_number.gas_meter_reading
+  - type: button
+    name: Submit Reading
+    entity: input_button.submit_gas_reading
+    tap_action:
+      action: toggle
+    icon: mdi:send
+    icon_height: 40px
+
+  # Reading History
+  - type: markdown
+    title: Reading History
     content: >
       {% set readings = state_attr('sensor.gas_consumption_data', 'records') %}
       {% if readings %}
+        | Date | Reading | Cumulative |
+        |------|---------|------------|
         {% for record in readings | reverse %}
-        - {{ record.datetime }}: {{ record.consumed_gas }} (cumulative: {{ record.consumed_gas_cumulated }})
+        | {{ record.datetime[:10] }} | {{ record.consumed_gas }} | {{ record.consumed_gas_cumulated or 'N/A' }} |
         {% endfor %}
       {% else %}
-        No gas meter data available.
+        No readings recorded yet.
       {% endif %}
 ```
 
-### Boiler Tracking Mode - Full Dashboard
+#### Option 2: Enhanced Dashboard with HACS Custom Cards
+
+For a more polished look, install these HACS frontend integrations:
+- [Mushroom Cards](https://github.com/piitaya/lovelace-mushroom)
+- [ApexCharts Card](https://github.com/RomRider/apexcharts-card)
+- [Mini Graph Card](https://github.com/kalkih/mini-graph-card)
+
+**Dashboard with Custom Cards:**
+
+```yaml
+type: vertical-stack
+cards:
+  # Header with current reading
+  - type: custom:mushroom-template-card
+    primary: Gas Meter
+    secondary: >
+      {% set records = state_attr('sensor.gas_consumption_data', 'records') %}
+      {{ records[-1].consumed_gas if records else 'No data' }}
+    icon: mdi:meter-gas
+    icon_color: orange
+    card_mod:
+      style: |
+        ha-card {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          --primary-text-color: white;
+          --secondary-text-color: rgba(255,255,255,0.8);
+        }
+
+  # Usage comparison (markdown card since sensor is non-numeric)
+  - type: markdown
+    title: Last Period Usage
+    content: >
+      {% set records = state_attr('sensor.gas_consumption_data', 'records') %}
+      {% if records and records | length > 1 %}
+        {% set latest = records[-1].consumed_gas | replace(' CCF', '') | replace(' m³', '') | float %}
+        {% set previous = records[-2].consumed_gas | replace(' CCF', '') | replace(' m³', '') | float %}
+        {% set usage = (latest - previous) | round(1) %}
+        {% set unit = records[-1].consumed_gas.split(' ')[-1] %}
+        <h1 style="text-align:center; color: {{ 'green' if usage < 100 else 'orange' if usage < 150 else 'red' }}">{{ usage }} {{ unit }}</h1>
+      {% else %}
+        <p style="text-align:center">Need 2+ readings</p>
+      {% endif %}
+
+  # Bill entry with mushroom chips
+  - type: horizontal-stack
+    cards:
+      - type: custom:mushroom-entity-card
+        entity: input_datetime.gas_billing_date
+        icon_color: blue
+      - type: custom:mushroom-number-card
+        entity: input_number.gas_meter_reading
+        icon_color: orange
+
+  - type: custom:mushroom-template-card
+    primary: Submit Reading
+    icon: mdi:send-circle
+    icon_color: green
+    tap_action:
+      action: call-service
+      service: input_button.press
+      target:
+        entity_id: input_button.submit_gas_reading
+
+  # Usage trend chart (requires ApexCharts)
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Usage Trend
+    graph_span: 12month
+    series:
+      - entity: sensor.gas_consumption_data
+        data_generator: |
+          const records = entity.attributes.records || [];
+          const data = [];
+          for (let i = 1; i < records.length; i++) {
+            const curr = parseFloat(records[i].consumed_gas.replace(/[^\d.-]/g, ''));
+            const prev = parseFloat(records[i-1].consumed_gas.replace(/[^\d.-]/g, ''));
+            const date = new Date(records[i].datetime);
+            data.push([date.getTime(), (curr - prev).toFixed(2)]);
+          }
+          return data;
+        name: Monthly Usage
+```
+
+### Boiler Tracking Mode
 
 #### Virtual Gas Meter Data Section
 ```yaml
 type: vertical-stack
+title: Virtual Gas Meter
 cards:
   - type: entities
     entities:
       - entity: sensor.consumed_gas
+        name: Current Consumption
       - entity: sensor.gas_meter_latest_update
-      - entity: sensor.heating_interval_2
-title: Virtual Gas Meter
+        name: Last Update
+      - entity: sensor.heating_interval
+        name: Heating Time
+  - type: history-graph
+    entities:
+      - entity: sensor.consumed_gas
+    hours_to_show: 168
+    title: Weekly Consumption
 ```
 
-#### Enter Actual Gas Meter Data Section
-For detailed boiler tracking dashboard setup including automations and helpers, see the [Boiler Tracking Dashboard Guide](docs/boiler-dashboard.md).
+#### Enter Meter Reading Section
+
+**Input Helpers** (add to `configuration.yaml`):
+```yaml
+input_datetime:
+  gas_update_datetime:
+    name: Reading Date/Time
+    has_date: true
+    has_time: true
+    icon: mdi:calendar-clock
+
+input_number:
+  consumed_gas:
+    name: Meter Reading
+    min: 0
+    max: 100000
+    step: 0.001
+    mode: box
+    icon: mdi:meter-gas
+
+input_button:
+  trigger_gas_update:
+    name: Submit Reading
+    icon: mdi:send
+```
+
+**Automation** (add to `automations.yaml`):
+```yaml
+- id: gas_meter_correction
+  alias: "Gas Meter - Submit Correction"
+  trigger:
+    - platform: state
+      entity_id: input_button.trigger_gas_update
+  condition:
+    - condition: numeric_state
+      entity_id: input_number.consumed_gas
+      above: 0
+  action:
+    - service: gas_meter.trigger_gas_update
+      data:
+        datetime: "{{ states('input_datetime.gas_update_datetime') }}"
+        consumed_gas: "{{ states('input_number.consumed_gas') | float }}"
+    - service: persistent_notification.create
+      data:
+        title: "Gas Meter Corrected"
+        message: "Reading updated to {{ states('input_number.consumed_gas') }}"
+```
+
+**Dashboard Card:**
+```yaml
+type: vertical-stack
+title: Enter Meter Reading
+cards:
+  - type: entities
+    entities:
+      - entity: input_datetime.gas_update_datetime
+      - entity: input_number.consumed_gas
+  - type: button
+    name: Submit Reading
+    entity: input_button.trigger_gas_update
+    tap_action:
+      action: toggle
+    icon: mdi:send
+```
 
 ## Usage
 
