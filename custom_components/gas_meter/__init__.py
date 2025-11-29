@@ -1,9 +1,9 @@
+"""Virtual Gas Meter integration for Home Assistant."""
 import logging
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.components.recorder import get_instance
 from homeassistant.util import dt as dt_util
-from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import entity_registry as er
 import custom_components.gas_meter.file_handler as fh
@@ -155,26 +155,6 @@ async def _register_services(hass: HomeAssistant):
     hass.services.async_register(
         DOMAIN, "read_gas_actualdata_file", read_gas_actualdata_file
     )
-
-async def async_setup(hass: HomeAssistant, config: dict):
-    """Set up the virtual gas meter integration (legacy YAML setup)."""
-    _LOGGER.info("Loading Virtual Gas Meter integration...")
-    _LOGGER.warning(
-        "Legacy YAML setup is deprecated. Please use the UI configuration flow instead. "
-        "Go to Settings > Devices & Services > Add Integration > Virtual Gas Meter"
-    )
-    await _register_services(hass)
-
-    # Set initial states for the sensors
-    now = dt_util.now()
-    hass.states.async_set(f"{DOMAIN}.latest_gas_update", now)
-    hass.states.async_set(f"{DOMAIN}.latest_gas_data", DEFAULT_LATEST_GAS_DATA)
-    hass.states.async_set(f"{DOMAIN}.average_m3_per_min", DEFAULT_BOILER_AV_M)
-    # No default boiler entity - user must configure via UI
-    hass.states.async_set(f"{DOMAIN}.boiler_entity", None)
-
-    await async_load_platform(hass, "sensor", DOMAIN, {}, config)
-    return True
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     """Set up the integration from a config entry (UI setup)."""
