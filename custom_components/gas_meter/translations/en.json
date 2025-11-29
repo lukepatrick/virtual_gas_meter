@@ -45,17 +45,17 @@
                 }
             }
         },
-        "enter_bill_reading": {
-            "name": "Enter Bill Reading",
-            "description": "Enter a gas meter reading from your utility bill (for Bill Entry mode).",
+        "enter_bill_usage": {
+            "name": "Enter Bill Usage",
+            "description": "Enter your gas usage from a utility bill.",
             "fields": {
                 "billing_date": {
                     "name": "Billing Date",
-                    "description": "The billing date or meter reading date."
+                    "description": "The billing period end date."
                 },
-                "meter_reading": {
-                    "name": "Meter Reading",
-                    "description": "The meter reading value in your configured unit."
+                "usage": {
+                    "name": "Usage",
+                    "description": "The actual gas usage for this billing period."
                 }
             }
         },

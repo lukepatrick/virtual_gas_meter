@@ -59,9 +59,9 @@ class CustomTemplateSensor(SensorEntity):
         return template.async_render()
 
 class GasDataSensor(SensorEntity):
-    """Sensor that displays gas consumption data with unit conversion."""
+    """Sensor that displays gas usage history with unit conversion."""
 
-    _attr_name = "Gas Consumption Data"
+    _attr_name = "Gas Usage History"
     _attr_unique_id = "gas_consumption_data"
 
     def __init__(self, hass: HomeAssistant, unit_system: str):
@@ -76,13 +76,18 @@ class GasDataSensor(SensorEntity):
             if self._gas_data:
                 # Format the last record (most recent)
                 latest_record = self._gas_data[-1]
-                formatted_datetime = latest_record["datetime"].strftime('%Y-%m-%d %H:%M:%S')
-                formatted_gas = format_gas_value(
+                formatted_datetime = latest_record["datetime"].strftime('%Y-%m-%d')
+                formatted_usage = format_gas_value(
                     latest_record['consumed_gas'],
                     self._unit_system,
                     precision=2
                 )
-                self._state = f"Last record: {formatted_datetime}, consumed gas: {formatted_gas}"
+                formatted_total = format_gas_value(
+                    latest_record.get('consumed_gas_cumulated', latest_record['consumed_gas']),
+                    self._unit_system,
+                    precision=2
+                )
+                self._state = f"{formatted_datetime}: {formatted_usage} (Total: {formatted_total})"
             else:
                 self._state = STATE_UNKNOWN
         except Exception as e:
@@ -96,24 +101,24 @@ class GasDataSensor(SensorEntity):
     @property
     def extra_state_attributes(self):
         if self._gas_data:
-            # Format all records for more user-friendly display on dashboard
+            # Format all records for dashboard display
             formatted_records = []
             for record in self._gas_data:
-                formatted_datetime = record["datetime"].strftime('%Y-%m-%d %H:%M:%S')
-                formatted_gas = format_gas_value(
+                formatted_datetime = record["datetime"].strftime('%Y-%m-%d')
+                formatted_usage = format_gas_value(
                     record['consumed_gas'],
                     self._unit_system,
-                    precision=3
+                    precision=2
                 )
                 formatted_cumulative = format_gas_value(
-                    record.get('consumed_gas_cumulated', 0),
+                    record.get('consumed_gas_cumulated', record['consumed_gas']),
                     self._unit_system,
-                    precision=3
+                    precision=2
                 )
                 formatted_record = {
-                    "datetime": formatted_datetime,
-                    "consumed_gas": formatted_gas,
-                    "consumed_gas_cumulated": formatted_cumulative,
+                    "date": formatted_datetime,
+                    "usage": formatted_usage,
+                    "cumulative_total": formatted_cumulative,
                 }
                 formatted_records.append(formatted_record)
 
@@ -144,9 +149,13 @@ class GasMeterTotalSensor(SensorEntity):
         try:
             gas_data = await fh.load_gas_actualdata(self.hass)
             if gas_data:
-                # Get the latest meter reading and convert to display unit
+                # Get the cumulative total and convert to display unit
                 latest_record = gas_data[-1]
-                canonical_value = latest_record['consumed_gas']
+                # Use cumulative total, fallback to consumed_gas for first record
+                canonical_value = latest_record.get(
+                    'consumed_gas_cumulated',
+                    latest_record['consumed_gas']
+                )
                 self._attr_native_value = round(
                     to_display_unit(canonical_value, self._unit_system),
                     3

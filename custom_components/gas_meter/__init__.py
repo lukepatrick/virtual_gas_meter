@@ -162,11 +162,11 @@ async def _register_services(hass: HomeAssistant):
             raise
             
     async def handle_bill_entry(call: ServiceCall):
-        """Handle service call to enter a bill reading (simplified for bill entry mode)."""
+        """Handle service call to enter period gas usage from a utility bill."""
         try:
             gas_consume = await fh.load_gas_actualdata(hass)
 
-            # Parse billing date
+            # Parse billing period end date
             billing_date = call.data.get("billing_date")
             if billing_date is None:
                 _LOGGER.error("Missing 'billing_date' in service call data.")
@@ -183,41 +183,44 @@ async def _register_services(hass: HomeAssistant):
             else:
                 gas_datetime = billing_date
 
-            # Parse meter reading
-            meter_reading = call.data.get("meter_reading")
-            if meter_reading is None:
-                _LOGGER.error("Missing 'meter_reading' in service call data.")
+            # Parse period usage (actual usage from bill, not meter reading)
+            usage = call.data.get("usage")
+            if usage is None:
+                _LOGGER.error("Missing 'usage' in service call data.")
                 return
 
-            _LOGGER.info(f"meter_reading received: {meter_reading}")
-            if isinstance(meter_reading, str):
+            _LOGGER.info(f"usage received: {usage}")
+            if isinstance(usage, str):
                 try:
-                    meter_reading = float(meter_reading)
+                    usage = float(usage)
                 except ValueError:
-                    _LOGGER.error(f"Invalid 'meter_reading' value: {meter_reading}")
+                    _LOGGER.error(f"Invalid 'usage' value: {usage}")
                     return
 
             # Convert input value to canonical unit (m³) if user is using imperial
             unit_system_state = hass.states.get(f"{DOMAIN}.unit_system")
             unit_system = unit_system_state.state if unit_system_state else DEFAULT_UNIT_SYSTEM
-            meter_reading_canonical = to_canonical_unit(meter_reading, unit_system)
-            _LOGGER.debug(f"meter_reading in canonical units (m³): {meter_reading_canonical}")
+            usage_canonical = to_canonical_unit(usage, unit_system)
+            _LOGGER.debug(f"usage in canonical units (m³): {usage_canonical}")
 
-            # Add record
-            gas_consume.add_record(gas_datetime, meter_reading_canonical)
+            # Calculate cumulative total (sum of all usage entries)
+            previous_cumulative = 0
+            if len(gas_consume) > 0:
+                previous_cumulative = gas_consume[-1].get("consumed_gas_cumulated", gas_consume[-1]["consumed_gas"])
 
-            # Calculate cumulative consumption if we have previous records
-            if len(gas_consume) > 1:
-                consumed_gas_cumulated = meter_reading_canonical - gas_consume[0]["consumed_gas"]
-                gas_consume[-1]["consumed_gas_cumulated"] = consumed_gas_cumulated
+            new_cumulative = previous_cumulative + usage_canonical
 
-            # Update states
+            # Add record with period usage and cumulative total
+            gas_consume.add_record(gas_datetime, usage_canonical)
+            gas_consume[-1]["consumed_gas_cumulated"] = new_cumulative
+
+            # Update states - latest_gas_data is cumulative for Energy Dashboard
             hass.states.async_set(f"{DOMAIN}.latest_gas_update", gas_datetime)
-            hass.states.async_set(f"{DOMAIN}.latest_gas_data", meter_reading_canonical)
+            hass.states.async_set(f"{DOMAIN}.latest_gas_data", new_cumulative)
 
             # Save updated gas consumption
             await fh.save_gas_actualdata(gas_consume, hass)
-            _LOGGER.info("Bill reading added successfully.")
+            _LOGGER.info(f"Bill usage added: {usage} for period ending {gas_datetime}. Cumulative total: {new_cumulative}")
 
         except Exception as e:
             _LOGGER.error("Error in handle_bill_entry: %s", str(e))
@@ -228,7 +231,7 @@ async def _register_services(hass: HomeAssistant):
         DOMAIN, "trigger_gas_update", handle_trigger_service
     )
     hass.services.async_register(
-        DOMAIN, "enter_bill_reading", handle_bill_entry
+        DOMAIN, "enter_bill_usage", handle_bill_entry
     )
     hass.services.async_register(
         DOMAIN, "read_gas_actualdata_file", read_gas_actualdata_file
