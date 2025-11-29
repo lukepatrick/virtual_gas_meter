@@ -12,9 +12,15 @@ from .const import (
     CONF_BOILER_ENTITY,
     CONF_BOILER_AVERAGE,
     CONF_LATEST_GAS_DATA,
+    CONF_UNIT_SYSTEM,
+    CONF_OPERATING_MODE,
     DEFAULT_BOILER_AV_H,
     DEFAULT_BOILER_AV_M,
     DEFAULT_LATEST_GAS_DATA,
+    DEFAULT_UNIT_SYSTEM,
+    DEFAULT_OPERATING_MODE,
+    MODE_BOILER_TRACKING,
+    MODE_BILL_ENTRY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,17 +167,40 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     await _register_services(hass)
 
     # Retrieve user input values
-    boiler_entity = config_entry.data.get(CONF_BOILER_ENTITY)
-    boiler_average = config_entry.data.get(CONF_BOILER_AVERAGE, DEFAULT_BOILER_AV_H)
-    boiler_av_min = boiler_average / 60
+    unit_system = config_entry.data.get(CONF_UNIT_SYSTEM, DEFAULT_UNIT_SYSTEM)
+    operating_mode = config_entry.data.get(CONF_OPERATING_MODE, DEFAULT_OPERATING_MODE)
     latest_gas_data = config_entry.data.get(CONF_LATEST_GAS_DATA, DEFAULT_LATEST_GAS_DATA)
     now = dt_util.now()
 
-    # Set initial states for the sensors
-    hass.states.async_set(f"{DOMAIN}.boiler_entity", boiler_entity)
-    hass.states.async_set(f"{DOMAIN}.average_m3_per_min", boiler_av_min)
+    # Store config in hass.data for access by sensors
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][config_entry.entry_id] = {
+        CONF_UNIT_SYSTEM: unit_system,
+        CONF_OPERATING_MODE: operating_mode,
+    }
+
+    # Set common initial states
+    hass.states.async_set(f"{DOMAIN}.unit_system", unit_system)
+    hass.states.async_set(f"{DOMAIN}.operating_mode", operating_mode)
     hass.states.async_set(f"{DOMAIN}.latest_gas_data", latest_gas_data)
     hass.states.async_set(f"{DOMAIN}.latest_gas_update", now)
+
+    # Mode-specific setup
+    if operating_mode == MODE_BOILER_TRACKING:
+        boiler_entity = config_entry.data.get(CONF_BOILER_ENTITY)
+        boiler_average = config_entry.data.get(CONF_BOILER_AVERAGE, DEFAULT_BOILER_AV_H)
+        boiler_av_min = boiler_average / 60
+
+        hass.states.async_set(f"{DOMAIN}.boiler_entity", boiler_entity)
+        hass.states.async_set(f"{DOMAIN}.average_m3_per_min", boiler_av_min)
+
+        _LOGGER.info(f"Virtual Gas Meter configured in Boiler Tracking mode with {unit_system} units")
+    else:
+        # Bill entry mode - no boiler entity needed
+        hass.states.async_set(f"{DOMAIN}.boiler_entity", None)
+        hass.states.async_set(f"{DOMAIN}.average_m3_per_min", 0)
+
+        _LOGGER.info(f"Virtual Gas Meter configured in Bill Entry mode with {unit_system} units")
 
     # Add the first record to the file if latest_gas_data is not 0
     if latest_gas_data != 0:
@@ -188,5 +217,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     """Unload the integration."""
+    # Clean up hass.data
+    if DOMAIN in hass.data and config_entry.entry_id in hass.data[DOMAIN]:
+        hass.data[DOMAIN].pop(config_entry.entry_id)
+
     await hass.config_entries.async_forward_entry_unload(config_entry, "sensor")
     return True
